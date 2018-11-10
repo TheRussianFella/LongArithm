@@ -232,12 +232,8 @@ int bn_sub_to(bn *t, bn const *right) {
 
   bn_add_to(t, negative_num);
 
-  //t->limbs[0] += 1;
   t->limbs[t->occupied_limbs-1] = 0;
   t->occupied_limbs -= 1;
-
-  //t->limbs = realloc(t->limbs, sizeof(limb_type)*biggest_size);
-  //t->occupied_limbs = biggest_size;
 
   return BN_OK;
 }
@@ -251,6 +247,15 @@ bn* bn_add(bn const *left, bn const *right) {
 
   return answer;
 }
+
+bn* bn_sub(bn const *left, bn const *right) {
+
+  bn* answer = bn_init(left);
+  bn_sub_to(answer, right);
+
+  return answer;
+}
+
 
 bn* bn_mul(bn const *left, bn const *right) {
 
@@ -270,6 +275,17 @@ bn* bn_mul(bn const *left, bn const *right) {
   return answer;
 }
 
+
+// Bad boy that ruins beautiful structure
+
+int bn_mul_to(bn *t, bn const *right) {
+
+  bn* answer = bn_mul(t, right);
+  bn_delete(t);
+  t = bn_init(answer);
+
+  return BN_OK;
+}
 ///////////////////////
 
 int main() {
@@ -278,14 +294,15 @@ int main() {
   bn* second = bn_new();
 
   bn_init_string_radix(first, "2048", 10);
-  bn_init_string_radix(second, "1024", 10);
+  bn_init_string_radix(second, "500", 10);
 
-  bn_sub_to(first, second);
+  bn* answer = bn_sub(first, second);
 
-  printf("\n %llu", bn_to_decimal(first));
+  printf("\n %llu", bn_to_decimal(answer));
 
   bn_delete(first);
   bn_delete(second);
+  bn_delete(answer);
 
   return 0;
 }
