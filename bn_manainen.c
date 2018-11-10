@@ -70,7 +70,7 @@ int bn_increase_size(bn* t) {
 
 int bn_digit_shift(bn* t, int num_digit) {
 
-  if (num_digit) {
+  if (num_digit && t->occupied_limbs) {
     if (t->occupied_limbs+num_digit > t->num_limbs)
       bn_add_limbs(t, (t->occupied_limbs+num_digit - t->num_limbs)*1.25);
 
@@ -78,9 +78,9 @@ int bn_digit_shift(bn* t, int num_digit) {
       t->limbs[i+num_digit] = t->limbs[i];
       t->limbs[i] = 0;
     }
-  }
 
-  t->occupied_limbs += num_digit;
+    t->occupied_limbs += num_digit;
+  }
 
   return BN_OK;
 }
@@ -140,6 +140,73 @@ int bn_multiply_limb_by_limb(bn* t, limb_type number, int limb_idx) {
   }
 
   return BN_OK;
+}
+
+int bn_equals_init(bn*, bn const*);
+
+typedef struct sd {
+  limb_type result;
+  bn* leftover;
+} single_devide_result;
+
+single_devide_result bn_limb_devide(bn* const a, bn* const b) {
+
+  single_devide_result answer;
+  answer.result = 0;
+
+  int cmp = bn_cmp(a, b);
+
+  if (cmp == 1) {
+    answer.result = 0;
+    answer.leftover = bn_init(a);
+
+  } else if (cmp == 0) {
+    answer.result = 1;
+    answer.leftover = bn_new();
+
+  } else {
+
+    limb_type left = 0, right = pow(2, sizeof(limb_type)*8)-1;
+    limb_type ans = 0;
+
+    bn* mult_result = bn_new();
+
+    while (right-left > 1) {
+
+      float distance = right-left;
+      limb_type middle = left + ceil(distance / 2);
+
+      bn_equals_init(mult_result, b);
+      bn_multiply_limb_by_limb(mult_result, middle, 0);
+
+      cmp = bn_cmp(mult_result, a);
+
+      if (cmp == 0) {
+        answer.result = middle;
+        answer.leftover = bn_new();
+        break;
+      } else if (cmp == 1) {
+        left = middle;
+      } else {
+        right = middle;
+      }
+    }
+
+    if (!answer.result) {
+      bn_equals_init(mult_result, b);
+      bn_multiply_limb_by_limb(mult_result, left, 0);
+
+      answer.result = left;
+
+      bn* leftover = bn_sub(a, mult_result);
+
+      answer.leftover = leftover;
+    }
+
+    bn_delete(mult_result);
+  }
+
+  return answer;
 }
 
 // Initialization
@@ -378,6 +445,47 @@ bn* bn_mul(bn const *left, bn const *right) {
 }
 
 
+
+typedef struct dr {
+  bn* full;
+  bn* leftover;
+} division_result;
+
+division_result bn_div_full(bn* const left, bn* const right) {
+
+  division_result result;
+  result.full = bn_new();
+  result.leftover = bn_new();
+
+  int cmp = bn_cmp(left, right);
+
+  if (cmp == 1) {
+    result.leftover = bn_init(left);
+  } else if (cmp == 0) {
+    bn_init_string(result.full, "1");
+  } else {
+
+    bn* to_devide = bn_new();
+
+    for (int i = left->occupied_limbs-1; i>=0; --i) {
+
+      bn_digit_shift(to_devide, 1);
+      bn_digit_shift(result.full, 1);
+
+      bn_add_limb_to_limb(to_devide, left->limbs[i], 0);
+      single_devide_result temp_res = bn_limb_devide(to_devide, right);
+
+      bn_equals_init(to_devide, temp_res.leftover);
+      bn_add_limb_to_limb(result.full, temp_res.result, 0);
+    }
+
+    bn_equals_init(result.leftover, to_devide);
+    bn_delete(to_devide);
+  }
+
+  return result;
+}
+
 // Bad boy that ruins beautiful structure
 
 int bn_mul_to(bn *t, bn const *right) {
@@ -395,17 +503,16 @@ int main() {
   bn* first = bn_new();
   bn* second = bn_new();
 
-  bn_init_string_radix(first, "20", 10);
-  bn_init_string_radix(second, "-1024", 10);
+  bn_init_string_radix(first, "4096", 10);
+  bn_init_string_radix(second, "9", 10);
 
-  //bn* answer = bn_sub(first, second);
+  division_result res = bn_div_full(first, second);
 
-  bn* ans = bn_mul(first, second);
-
-  printf("\n %lld", bn_to_decimal(ans));
+  printf("%lld %lld\n",bn_to_decimal(res.full), bn_to_decimal(res.leftover));
 
   bn_delete(first);
   bn_delete(second);
+  bn_delete(res.leftover);
 
   return 0;
 }
