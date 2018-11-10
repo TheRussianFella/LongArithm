@@ -18,14 +18,14 @@ struct bn_s {
   unsigned int num_limbs;
   unsigned int occupied_limbs;
 
-  char sign;
+  unsigned char sign;
   int radix;
 };
 
 /////
 
 // Creation deletion
-
+// Shortcut specification for sign: 1 == '+' 0 == '-'
 bn* bn_new() {
   bn* new = (bn*) malloc(sizeof(bn));
 
@@ -85,13 +85,13 @@ int bn_digit_shift(bn* t, int num_digit) {
   return BN_OK;
 }
 
-unsigned long long bn_to_decimal(bn* t) {
-  unsigned long long ans = 0;
+long long bn_to_decimal(bn* t) {
+  long long ans = 0;
 
   for (int i = 0; i < t->num_limbs; ++i)
     ans += t->limbs[i] * pow(pow(2, sizeof(limb_type)*8), i);
 
-  return ans;
+  return ans * (t->sign ? 1 : -1);
 }
 
 // By limb operations
@@ -151,6 +151,7 @@ int bn_init_string_radix(bn *t, const char *init_string, int radix) {
     sign = 0;
     start_idx = 1;
   }
+  t -> sign = sign;
 
   for (int i = start_idx; init_string[i]!='\0'; ++i) {
     bn_multiply_limb_by_limb(t, radix, 0);
@@ -205,12 +206,76 @@ int bn_equals_init(bn* t, bn const *orig) {
   return BN_OK;
 }
 
+// Signs and comparison
+
+int bn_abs(bn *t) {
+  t->sign = 1;
+  return BN_OK;
+}
+
+int bn_neg(bn *t) {
+  t->sign ^= 1;
+  return BN_OK;
+}
+
+int bn_cmp(bn const *left, bn const *right) {
+
+  if (left->sign != right->sign){
+    if (left->sign)
+      return -1;
+    else
+      return 1;
+  }
+
+  int positive = left->sign ? 1 : -1;
+
+  if (left->occupied_limbs != right->occupied_limbs) {
+    if (left->occupied_limbs > right->occupied_limbs)
+      return -1 * positive;
+    else
+      return 1 * positive;
+  }
+
+  for (int i = left->occupied_limbs-1; i>=0; --i) {
+    if (left->limbs[i] != right->limbs[i]) {
+      if (left->limbs[i] > right->limbs[i])
+        return -1 * positive;
+      else
+        return 1 * positive;
+    }
+  }
+
+  return 0;
+
+}
+
 // One argument operations
 
 int bn_add_to(bn *t, bn const *right) {
 
-  for (int i = 0; i < right->occupied_limbs; ++i)
-    bn_add_limb_to_limb(t, right->limbs[i], i);
+  if ( (!t->sign && !right->sign) || (t->sign && right->sign)){
+    for (int i = 0; i < right->occupied_limbs; ++i)
+      bn_add_limb_to_limb(t, right->limbs[i], i);
+
+  } else {
+    // Plus negative == Minus positive
+    bn* right_copy = bn_init(right);
+
+    if (!t->sign) {
+      limb_type* temp = t->limbs;
+      t->limbs = right_copy->limbs;
+      right_copy->limbs = temp;
+
+      unsigned int temp_size = t->occupied_limbs;
+      t->occupied_limbs = right_copy->occupied_limbs;
+      right_copy->occupied_limbs = temp_size;
+
+      bn_abs(t);
+    } else
+      bn_abs(right_copy);
+
+    bn_sub_to(t, right_copy);
+  }
 
   return BN_OK;
 }
@@ -224,16 +289,48 @@ int negate(bn* t, int num_limbs) {
 
 int bn_sub_to(bn *t, bn const *right) {
 
-  bn* negative_num = bn_init(right);
+  bn* right_copy = bn_init(right);
 
-  int biggest_size = negative_num->occupied_limbs > t->occupied_limbs ? negative_num->occupied_limbs : t->occupied_limbs;
+  if (!right->sign) {
+    // Minus negative == Plust positive
+    bn_abs(right_copy);
+    bn_add_to(t, right_copy);
+  } else if (!t->sign) {
+    // Negative - positive = negative + (-positive)
+    bn_abs(t);
+    bn_add_to(t, right);
+    bn_neg(t);
+  } else {
 
-  negate(negative_num, biggest_size);
+    int cmp = bn_cmp(t, right_copy);
 
-  bn_add_to(t, negative_num);
+    if (cmp == 1) {
+      limb_type* temp = t->limbs;
+      t->limbs = right_copy->limbs;
+      right_copy->limbs = temp;
 
-  t->limbs[t->occupied_limbs-1] = 0;
-  t->occupied_limbs -= 1;
+      unsigned int temp_size = t->occupied_limbs;
+      t->occupied_limbs = right_copy->occupied_limbs;
+      right_copy->occupied_limbs = temp_size;
+    }
+
+    if (cmp != 0) {
+      bn* negative_num = bn_init(right_copy);
+
+      int biggest_size = negative_num->occupied_limbs > t->occupied_limbs ?
+                          negative_num->occupied_limbs : t->occupied_limbs;
+
+      negate(negative_num, biggest_size);
+
+      bn_add_to(t, negative_num);
+
+      t->limbs[t->occupied_limbs-1] = 0;
+      t->occupied_limbs -= 1;
+    } else {
+      memset(t->limbs, 0, t->occupied_limbs);
+      t->occupied_limbs = 0;
+    }
+  }
 
   return BN_OK;
 }
@@ -272,6 +369,11 @@ bn* bn_mul(bn const *left, bn const *right) {
     bn_equals_init(temp, left);
   }
 
+  if (left->sign == right->sign)
+    answer -> sign = 1;
+  else
+    answer -> sign = 0;
+
   return answer;
 }
 
@@ -293,16 +395,17 @@ int main() {
   bn* first = bn_new();
   bn* second = bn_new();
 
-  bn_init_string_radix(first, "2048", 10);
-  bn_init_string_radix(second, "500", 10);
+  bn_init_string_radix(first, "20", 10);
+  bn_init_string_radix(second, "-1024", 10);
 
-  bn* answer = bn_sub(first, second);
+  //bn* answer = bn_sub(first, second);
 
-  printf("\n %llu", bn_to_decimal(answer));
+  bn* ans = bn_mul(first, second);
+
+  printf("\n %lld", bn_to_decimal(ans));
 
   bn_delete(first);
   bn_delete(second);
-  bn_delete(answer);
 
   return 0;
 }
