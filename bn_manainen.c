@@ -215,6 +215,33 @@ int bn_add_to(bn *t, bn const *right) {
   return BN_OK;
 }
 
+int negate(bn* t, int num_limbs) {
+  for (int i = 0; i < num_limbs; ++i)
+    t->limbs[i] = ~(t->limbs[i]);
+  t->occupied_limbs = num_limbs;
+  bn_add_limb_to_limb(t, 1, 0);
+}
+
+int bn_sub_to(bn *t, bn const *right) {
+
+  bn* negative_num = bn_init(right);
+
+  int biggest_size = negative_num->occupied_limbs > t->occupied_limbs ? negative_num->occupied_limbs : t->occupied_limbs;
+
+  negate(negative_num, biggest_size);
+
+  bn_add_to(t, negative_num);
+
+  //t->limbs[0] += 1;
+  t->limbs[t->occupied_limbs-1] = 0;
+  t->occupied_limbs -= 1;
+
+  //t->limbs = realloc(t->limbs, sizeof(limb_type)*biggest_size);
+  //t->occupied_limbs = biggest_size;
+
+  return BN_OK;
+}
+
 // Two argument operations
 
 bn* bn_add(bn const *left, bn const *right) {
@@ -250,12 +277,12 @@ int main() {
   bn* first = bn_new();
   bn* second = bn_new();
 
-  bn_init_string_radix(first, "12", 10);
-  bn_init_string_radix(second, "1201", 10);
+  bn_init_string_radix(first, "2048", 10);
+  bn_init_string_radix(second, "1024", 10);
 
-  bn* ans = bn_mul(first, second);
+  bn_sub_to(first, second);
 
-  printf("\n%llu * %llu = %llu\n", bn_to_decimal(first), bn_to_decimal(second), bn_to_decimal(ans));
+  printf("\n %llu", bn_to_decimal(first));
 
   bn_delete(first);
   bn_delete(second);
