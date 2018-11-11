@@ -85,15 +85,6 @@ int bn_digit_shift(bn* t, int num_digit) {
   return BN_OK;
 }
 
-long long bn_to_decimal(bn* t) {
-  long long ans = 0;
-
-  for (int i = 0; i < t->num_limbs; ++i)
-    ans += t->limbs[i] * pow(pow(2, sizeof(limb_type)*8), i);
-
-  return ans * (t->sign ? 1 : -1);
-}
-
 // By limb operations
 
 int bn_add_limb_to_limb(bn* t, limb_type number, int limb_idx) {
@@ -149,7 +140,7 @@ typedef struct sd {
   bn* leftover;
 } single_devide_result;
 
-single_devide_result bn_limb_devide(bn* const a, bn* const b) {
+single_devide_result bn_limb_devide(bn const *a, bn const *b) {
 
   single_devide_result answer;
   answer.result = 0;
@@ -451,7 +442,7 @@ typedef struct dr {
   bn* leftover;
 } division_result;
 
-division_result bn_div_full(bn* const left, bn* const right) {
+division_result bn_div_full(bn const *left, bn const *right) {
 
   division_result result;
   result.full = bn_new();
@@ -486,6 +477,18 @@ division_result bn_div_full(bn* const left, bn* const right) {
   return result;
 }
 
+bn* bn_div(bn const *left, bn const *right) {
+  division_result result = bn_div_full(left, right);
+  bn_delete(result.leftover);
+  return result.full;
+}
+
+bn* bn_mod(bn const *left, bn const *right) {
+  division_result result = bn_div_full(left, right);
+  bn_delete(result.full);
+  return result.leftover;
+}
+
 // Bad boy that ruins beautiful structure
 
 int bn_mul_to(bn *t, bn const *right) {
@@ -496,6 +499,37 @@ int bn_mul_to(bn *t, bn const *right) {
 
   return BN_OK;
 }
+
+int bn_div_to(bn *t, bn const *right) {
+
+  bn* answer = bn_div(t, right);
+  bn_delete(t);
+  t = bn_init(answer);
+
+  return BN_OK;
+}
+
+int bn_mod_to(bn *t, bn const *right) {
+
+  bn* answer = bn_mod(t, right);
+  bn_delete(t);
+  t = bn_init(answer);
+
+  return BN_OK;
+}
+
+// Printing functions
+
+long long bn_to_decimal(bn* t) {
+  long long ans = 0;
+
+  for (int i = 0; i < t->num_limbs; ++i)
+    ans += t->limbs[i] * pow(pow(2, sizeof(limb_type)*8), i);
+
+  return ans * (t->sign ? 1 : -1);
+}
+
+
 ///////////////////////
 
 int main() {
