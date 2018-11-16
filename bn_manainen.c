@@ -141,6 +141,7 @@ typedef struct sd {
 } single_devide_result;
 
 single_devide_result bn_limb_devide(bn const *a, bn const *b) {
+  // Fucks up, when a or b is negative
 
   single_devide_result answer;
   answer.result = 0;
@@ -245,6 +246,7 @@ bn *bn_init(bn const *orig) {
 
 int bn_equals_init(bn* t, bn const *orig) {
 
+
   if (t->num_limbs > orig->occupied_limbs) {
 
     memset(t->limbs, 0, t->num_limbs);
@@ -264,6 +266,12 @@ int bn_equals_init(bn* t, bn const *orig) {
   return BN_OK;
 }
 
+/*
+int bn_init_int(bn *t, int init_int) {
+
+
+}
+*/
 // Signs and comparison
 
 int bn_abs(bn *t) {
@@ -274,6 +282,28 @@ int bn_abs(bn *t) {
 int bn_neg(bn *t) {
   t->sign ^= 1;
   return BN_OK;
+}
+
+int bn_abs_cmp(bn const *left, bn const *right) {
+
+  if (left->occupied_limbs != right->occupied_limbs) {
+    if (left->occupied_limbs > right->occupied_limbs)
+      return -1;
+    else
+      return 1;
+  }
+
+  for (int i = left->occupied_limbs-1; i>=0; --i) {
+    if (left->limbs[i] != right->limbs[i]) {
+      if (left->limbs[i] > right->limbs[i])
+        return -1;
+      else
+        return 1;
+    }
+  }
+
+  return 0;
+
 }
 
 int bn_cmp(bn const *left, bn const *right) {
@@ -287,23 +317,7 @@ int bn_cmp(bn const *left, bn const *right) {
 
   int positive = left->sign ? 1 : -1;
 
-  if (left->occupied_limbs != right->occupied_limbs) {
-    if (left->occupied_limbs > right->occupied_limbs)
-      return -1 * positive;
-    else
-      return 1 * positive;
-  }
-
-  for (int i = left->occupied_limbs-1; i>=0; --i) {
-    if (left->limbs[i] != right->limbs[i]) {
-      if (left->limbs[i] > right->limbs[i])
-        return -1 * positive;
-      else
-        return 1 * positive;
-    }
-  }
-
-  return 0;
+  return bn_abs_cmp(left, right) * positive;
 
 }
 
@@ -390,6 +404,13 @@ int bn_sub_to(bn *t, bn const *right) {
     }
   }
 
+  while(1){
+    if(t->limbs[t->occupied_limbs-1] == 0)
+      t->occupied_limbs -= 1;
+    else
+      break;
+  }
+
   return BN_OK;
 }
 
@@ -442,6 +463,8 @@ typedef struct dr {
   bn* leftover;
 } division_result;
 
+
+long long bn_to_decimal(bn* t);
 division_result bn_div_full(bn const *left, bn const *right) {
 
   division_result result;
@@ -460,14 +483,30 @@ division_result bn_div_full(bn const *left, bn const *right) {
 
     for (int i = left->occupied_limbs-1; i>=0; --i) {
 
+//      printf("Before shift: %d, %lld\n", to_devide->occupied_limbs, bn_to_decimal(to_devide));
       bn_digit_shift(to_devide, 1);
+//      printf("After shift: %d, %lld\n", to_devide->occupied_limbs, bn_to_decimal(to_devide));
       bn_digit_shift(result.full, 1);
 
+//      printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
+
+//      printf("%d\n", left->limbs[i]);
       bn_add_limb_to_limb(to_devide, left->limbs[i], 0);
+
+//      printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
+
+//      printf("Deviding: %lld\n", bn_to_decimal(to_devide));
+
       single_devide_result temp_res = bn_limb_devide(to_devide, right);
+
+      //printf("%d %lld\n", temp_res.result, bn_to_decimal(temp_res.leftover));
+//      printf("Leftover: %d, %lld\n", temp_res.leftover->occupied_limbs,  bn_to_decimal(temp_res.leftover));
 
       bn_equals_init(to_devide, temp_res.leftover);
       bn_add_limb_to_limb(result.full, temp_res.result, 0);
+
+//      printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
+
     }
 
     bn_equals_init(result.leftover, to_devide);
@@ -480,6 +519,12 @@ division_result bn_div_full(bn const *left, bn const *right) {
 bn* bn_div(bn const *left, bn const *right) {
   division_result result = bn_div_full(left, right);
   bn_delete(result.leftover);
+
+  if (left->sign == right->sign)
+    result.full->sign = 1;
+  else
+    result.full->sign = 0;
+
   return result.full;
 }
 
@@ -530,23 +575,141 @@ long long bn_to_decimal(bn* t) {
 }
 
 
+char *strrev(char *str)
+{
+      char *p1, *p2;
+
+      if (! str || ! *str)
+            return str;
+      for (p1 = str, p2 = str + strlen(str) - 1; p2 > p1; ++p1, --p2)
+      {
+            *p1 ^= *p2;
+            *p2 ^= *p1;
+            *p1 ^= *p2;
+      }
+      return str;
+}
+
+const char *bn_to_string(bn const *t, int radix) {
+
+  char* result_string = (char*) calloc(t->occupied_limbs*4, sizeof(char));
+
+  bn* temp = bn_init(t);
+  bn_abs(temp);
+
+  bn* long_radix = bn_new();
+  bn_init_string(long_radix, "10");
+
+  for (int i = 0; 1; ++i) {
+/*
+    printf("New num\n");
+
+    for(int j = 0; j<temp->occupied_limbs; ++j)
+      printf("%d ", temp->limbs[j]);
+    printf("\n");
+*/
+    division_result res = bn_div_full(temp, long_radix);
+//    printf("%lld %lld %lld\n", bn_to_decimal(temp), bn_to_decimal(res.full), bn_to_decimal(res.leftover));
+
+    result_string[i] = res.leftover->limbs[0]+'0';
+    bn_equals_init(temp, res.full);
+
+    bn_delete(res.full);
+    bn_delete(res.leftover);
+
+    if (temp->limbs[0] == 0) {
+      if (!t->sign) {
+        result_string[i+1] = '-';
+        result_string[i+2] = '\0';
+      } else
+        result_string[i+1] = '\0';
+
+      result_string = strrev(result_string);
+
+      break;
+    }
+  }
+
+  bn_delete(temp);
+  bn_delete(long_radix);
+  return result_string;
+}
+
 ///////////////////////
+/*
+int main() {
+
+  bn* first = bn_new();
+  bn* second = bn_new();
+  //83966
+  bn_init_string_radix(first, "34798347893450934343434562892384927398748273948720394898098", 10);
+
+  printf("Original number %lld\n", bn_to_decimal(first));
+  printf("%d %d %d\n", first->limbs[0], first->limbs[1], first->limbs[2]);
+
+  //bn_init_string_radix(second, "10", 10);
+
+  //division_result res = bn_div_full(first, second);
+
+  //printf("%lld %lld\n",bn_to_decimal(res.full), bn_to_decimal(res.leftover));
+  //printf("%lld\n", bn_to_decimal(bn_mul(first, second)));
+  //printf("%lld", bn_to_decimal(first));
+
+  char* str = bn_to_string(first, 10);
+
+  printf("%s\n", str);
+
+  bn_delete(first);
+  bn_delete(second);
+  //free(str);
+
+  return 0;
+}
+*/
 
 int main() {
 
   bn* first = bn_new();
   bn* second = bn_new();
 
-  bn_init_string_radix(first, "4096", 10);
-  bn_init_string_radix(second, "9", 10);
+  char* temp_str = (char*) calloc(sizeof(char), 100000);
+  char new_char;
 
-  division_result res = bn_div_full(first, second);
+  scanf("%c", &new_char);
+  int i;
+  for(i = 0; new_char!='\n'; ++i) {
+    temp_str[i] = new_char;
+    scanf("%c", &new_char);
+  }
+  temp_str[i] = '\0';
 
-  printf("%lld %lld\n",bn_to_decimal(res.full), bn_to_decimal(res.leftover));
+  bn_init_string_radix(first, temp_str, 10);
+
+  scanf("%c", &new_char);
+  int sum = new_char=='+';
+
+  scanf("%c", &new_char);
+  scanf("%c", &new_char);
+  for(i = 0; new_char!='\n'; ++i) {
+    temp_str[i] = new_char;
+    scanf("%c", &new_char);
+  }
+  temp_str[i] = '\0';
+
+  bn_init_string_radix(second, temp_str, 10);
+
+  char* result;
+
+  if (sum)
+    result = bn_to_string(bn_add(first, second), 10);
+  else
+    result = bn_to_string(bn_sub(first, second), 10);
+
+  printf("%s\n", result);
 
   bn_delete(first);
   bn_delete(second);
-  bn_delete(res.leftover);
 
-  return 0;
+  free(temp_str);
+  free(result);
 }
