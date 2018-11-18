@@ -3,7 +3,54 @@
 #include <math.h>
 #include <string.h>
 
-#include "bn.h"
+//#include "bn.h"
+
+///////////////
+struct bn_s;
+typedef struct bn_s bn;
+
+enum bn_codes {
+BN_OK, BN_NULL_OBJECT, BN_NO_MEMORY, BN_DIVIDE_BY_ZERO
+};
+
+bn *bn_new(); // Создать новое BN
+bn *bn_init(bn const *orig); // Создать копию существующего BN
+// Инициализировать значение BN десятичным представлением строки
+int bn_init_string(bn *t, const char *init_string);
+// Инициализировать значение BN представлением строки
+// в системе счисления radix
+int bn_init_string_radix(bn *t, const char *init_string, int radix);
+// Инициализировать значение BN заданным целым числом
+int bn_init_int(bn *t, int init_int);
+// Уничтожить BN (освободить память)
+int bn_delete(bn *t);
+
+// Операции, аналогичные +=, -=, *=, /=, %=
+int bn_add_to(bn *t, bn const *right);
+int bn_sub_to(bn *t, bn const *right);
+int bn_mul_to(bn *t, bn const *right);
+int bn_div_to(bn *t, bn const *right);
+int bn_mod_to(bn *t, bn const *right);
+// Возвести число в степень degree
+int bn_pow_to(bn *t, int degree);
+// Извлечь корень степени reciprocal из BN (бонусная функция)
+int bn_root_to(bn *t, int reciprocal);
+// Аналоги операций x = l+r (l-r, l*r, l/r, l%r)
+bn* bn_add(bn const *left, bn const *right);
+bn* bn_sub(bn const *left, bn const *right);
+bn* bn_mul(bn const *left, bn const *right);
+bn* bn_div(bn const *left, bn const *right);
+bn* bn_mod(bn const *left, bn const *right);
+// Выдать представление BN в системе счисления radix в виде строки
+// Строку после использования потребуется удалить.
+const char *bn_to_string(bn const *t, int radix);
+// Если левое меньше, вернуть <0; если равны, вернуть 0; иначе >0
+int bn_cmp(bn const *left, bn const *right);
+int bn_neg(bn *t); // Изменить знак на противоположный
+int bn_abs(bn *t); // Взять модуль
+int bn_sign(bn const *t); //-1 если t<0; 0 если t = 0, 1 если t>0
+///////////////////////////
+
 
 typedef unsigned char limb_type;
 typedef unsigned short bigger_type;
@@ -158,15 +205,14 @@ single_devide_result bn_limb_devide(bn const *a, bn const *b) {
 
   } else {
 
-    limb_type left = 0, right = pow(2, sizeof(limb_type)*8)-1;
-    limb_type ans = 0;
+    bigger_type left = 0, right = pow(2, sizeof(limb_type)*8);
 
     bn* mult_result = bn_new();
 
     while (right-left > 1) {
 
       float distance = right-left;
-      limb_type middle = left + ceil(distance / 2);
+      bigger_type middle = left + ceil(distance / 2);
 
       bn_equals_init(mult_result, b);
       bn_multiply_limb_by_limb(mult_result, middle, 0);
@@ -185,6 +231,7 @@ single_devide_result bn_limb_devide(bn const *a, bn const *b) {
     }
 
     if (!answer.result) {
+
       bn_equals_init(mult_result, b);
       bn_multiply_limb_by_limb(mult_result, left, 0);
 
@@ -357,6 +404,7 @@ int negate(bn* t, int num_limbs) {
     t->limbs[i] = ~(t->limbs[i]);
   t->occupied_limbs = num_limbs;
   bn_add_limb_to_limb(t, 1, 0);
+  return BN_OK;
 }
 
 int bn_sub_to(bn *t, bn const *right) {
@@ -398,17 +446,23 @@ int bn_sub_to(bn *t, bn const *right) {
 
       t->limbs[t->occupied_limbs-1] = 0;
       t->occupied_limbs -= 1;
+
+      if (cmp == 1)
+        t->sign=0;
+
     } else {
       memset(t->limbs, 0, t->occupied_limbs);
       t->occupied_limbs = 0;
     }
   }
 
-  while(1){
-    if(t->limbs[t->occupied_limbs-1] == 0)
-      t->occupied_limbs -= 1;
-    else
-      break;
+  if(t->occupied_limbs != 0){
+    while(1){
+      if(t->limbs[t->occupied_limbs-1] == 0)
+        t->occupied_limbs -= 1;
+      else
+        break;
+      }
   }
 
   return BN_OK;
@@ -483,29 +537,29 @@ division_result bn_div_full(bn const *left, bn const *right) {
 
     for (int i = left->occupied_limbs-1; i>=0; --i) {
 
-//      printf("Before shift: %d, %lld\n", to_devide->occupied_limbs, bn_to_decimal(to_devide));
+      //printf("Before shift: %d, %lld\n", to_devide->occupied_limbs, bn_to_decimal(to_devide));
       bn_digit_shift(to_devide, 1);
-//      printf("After shift: %d, %lld\n", to_devide->occupied_limbs, bn_to_decimal(to_devide));
+      //printf("After shift: %d, %lld\n", to_devide->occupied_limbs, bn_to_decimal(to_devide));
       bn_digit_shift(result.full, 1);
 
-//      printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
+      //printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
 
-//      printf("%d\n", left->limbs[i]);
+      //printf("%d\n", left->limbs[i]);
       bn_add_limb_to_limb(to_devide, left->limbs[i], 0);
 
-//      printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
+      //printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
 
-//      printf("Deviding: %lld\n", bn_to_decimal(to_devide));
+      //printf("Deviding: %lld\n", bn_to_decimal(to_devide));
 
       single_devide_result temp_res = bn_limb_devide(to_devide, right);
 
       //printf("%d %lld\n", temp_res.result, bn_to_decimal(temp_res.leftover));
-//      printf("Leftover: %d, %lld\n", temp_res.leftover->occupied_limbs,  bn_to_decimal(temp_res.leftover));
+      //printf("Leftover: %d, %lld\n", temp_res.leftover->occupied_limbs,  bn_to_decimal(temp_res.leftover));
 
       bn_equals_init(to_devide, temp_res.leftover);
       bn_add_limb_to_limb(result.full, temp_res.result, 0);
 
-//      printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
+      //printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
 
     }
 
@@ -594,6 +648,12 @@ const char *bn_to_string(bn const *t, int radix) {
 
   char* result_string = (char*) calloc(t->occupied_limbs*4, sizeof(char));
 
+  if (t->occupied_limbs == 0) {
+    result_string[0] = '0';
+    result_string[1] = '\0';
+    return (const char*) result_string;
+  }
+
   bn* temp = bn_init(t);
   bn_abs(temp);
 
@@ -601,9 +661,9 @@ const char *bn_to_string(bn const *t, int radix) {
   bn_init_string(long_radix, "10");
 
   for (int i = 0; 1; ++i) {
-/*
-    printf("New num\n");
 
+    /*
+    printf("New num\n");
     for(int j = 0; j<temp->occupied_limbs; ++j)
       printf("%d ", temp->limbs[j]);
     printf("\n");
@@ -617,7 +677,7 @@ const char *bn_to_string(bn const *t, int radix) {
     bn_delete(res.full);
     bn_delete(res.leftover);
 
-    if (temp->limbs[0] == 0) {
+    if (temp->occupied_limbs == 0) {
       if (!t->sign) {
         result_string[i+1] = '-';
         result_string[i+2] = '\0';
@@ -632,40 +692,10 @@ const char *bn_to_string(bn const *t, int radix) {
 
   bn_delete(temp);
   bn_delete(long_radix);
-  return result_string;
+  return (const char*) result_string;
 }
 
 ///////////////////////
-/*
-int main() {
-
-  bn* first = bn_new();
-  bn* second = bn_new();
-  //83966
-  bn_init_string_radix(first, "34798347893450934343434562892384927398748273948720394898098", 10);
-
-  printf("Original number %lld\n", bn_to_decimal(first));
-  printf("%d %d %d\n", first->limbs[0], first->limbs[1], first->limbs[2]);
-
-  //bn_init_string_radix(second, "10", 10);
-
-  //division_result res = bn_div_full(first, second);
-
-  //printf("%lld %lld\n",bn_to_decimal(res.full), bn_to_decimal(res.leftover));
-  //printf("%lld\n", bn_to_decimal(bn_mul(first, second)));
-  //printf("%lld", bn_to_decimal(first));
-
-  char* str = bn_to_string(first, 10);
-
-  printf("%s\n", str);
-
-  bn_delete(first);
-  bn_delete(second);
-  //free(str);
-
-  return 0;
-}
-*/
 
 int main() {
 
@@ -698,12 +728,12 @@ int main() {
 
   bn_init_string_radix(second, temp_str, 10);
 
-  char* result;
-
   if (sum)
-    result = bn_to_string(bn_add(first, second), 10);
+    bn_add_to(first, second);
   else
-    result = bn_to_string(bn_sub(first, second), 10);
+    bn_sub_to(first, second);
+
+  const char* result = bn_to_string(first, 10);
 
   printf("%s\n", result);
 
@@ -711,5 +741,5 @@ int main() {
   bn_delete(second);
 
   free(temp_str);
-  free(result);
+  free((char*)result);
 }
