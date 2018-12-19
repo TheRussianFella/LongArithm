@@ -1,6 +1,9 @@
 struct bn_s;
 typedef struct bn_s bn;
 
+struct dr;
+typedef struct dr division_result;
+
 enum bn_codes {
 BN_OK, BN_NULL_OBJECT, BN_NO_MEMORY, BN_DIVIDE_BY_ZERO
 };
@@ -16,6 +19,8 @@ int bn_init_string_radix(bn *t, const char *init_string, int radix);
 int bn_init_int(bn *t, int init_int);
 // Уничтожить BN (освободить память)
 int bn_delete(bn *t);
+// Инициализация другим bn'ом
+int bn_equals_init(bn* t, bn const* other);
 
 // Операции, аналогичные +=, -=, *=, /=, %=
 int bn_add_to(bn *t, bn const *right);
@@ -23,6 +28,9 @@ int bn_sub_to(bn *t, bn const *right);
 int bn_mul_to(bn *t, bn const *right);
 int bn_div_to(bn *t, bn const *right);
 int bn_mod_to(bn *t, bn const *right);
+
+division_result bn_div_full(bn const *left, bn const *right);
+
 // Возвести число в степень degree
 int bn_pow_to(bn *t, int degree);
 // Извлечь корень степени reciprocal из BN (бонусная функция)

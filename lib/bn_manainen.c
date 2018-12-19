@@ -3,80 +3,55 @@
 #include <math.h>
 #include <string.h>
 
-//#include "bn.h"
-
-///////////////
-struct bn_s;
-typedef struct bn_s bn;
-
-enum bn_codes {
-BN_OK, BN_NULL_OBJECT, BN_NO_MEMORY, BN_DIVIDE_BY_ZERO
-};
-
-bn *bn_new(); // Создать новое BN
-bn *bn_init(bn const *orig); // Создать копию существующего BN
-// Инициализировать значение BN десятичным представлением строки
-int bn_init_string(bn *t, const char *init_string);
-// Инициализировать значение BN представлением строки
-// в системе счисления radix
-int bn_init_string_radix(bn *t, const char *init_string, int radix);
-// Инициализировать значение BN заданным целым числом
-int bn_init_int(bn *t, int init_int);
-// Уничтожить BN (освободить память)
-int bn_delete(bn *t);
-
-// Операции, аналогичные +=, -=, *=, /=, %=
-int bn_add_to(bn *t, bn const *right);
-int bn_sub_to(bn *t, bn const *right);
-int bn_mul_to(bn *t, bn const *right);
-int bn_div_to(bn *t, bn const *right);
-int bn_mod_to(bn *t, bn const *right);
-// Возвести число в степень degree
-int bn_pow_to(bn *t, int degree);
-// Извлечь корень степени reciprocal из BN (бонусная функция)
-int bn_root_to(bn *t, int reciprocal);
-// Аналоги операций x = l+r (l-r, l*r, l/r, l%r)
-bn* bn_add(bn const *left, bn const *right);
-bn* bn_sub(bn const *left, bn const *right);
-bn* bn_mul(bn const *left, bn const *right);
-bn* bn_div(bn const *left, bn const *right);
-bn* bn_mod(bn const *left, bn const *right);
-// Выдать представление BN в системе счисления radix в виде строки
-// Строку после использования потребуется удалить.
-const char *bn_to_string(bn const *t, int radix);
-// Если левое меньше, вернуть <0; если равны, вернуть 0; иначе >0
-int bn_cmp(bn const *left, bn const *right);
-int bn_neg(bn *t); // Изменить знак на противоположный
-int bn_abs(bn *t); // Взять модуль
-int bn_sign(bn const *t); //-1 если t<0; 0 если t = 0, 1 если t>0
-///////////////////////////
-
+#include "bn.h"
 
 typedef unsigned char limb_type;
 typedef unsigned short bigger_type;
 #define NUM_NEW_LIMBS 10
 
-// Data structure
+
+////////////////////////
+///////// Data structure
+////////////////////////
 
 
 struct bn_s {
+
   limb_type* limbs;
 
   unsigned int num_limbs;
-  unsigned int occupied_limbs;
+  unsigned int occupied_limbs; // Zero has occupied_limbs = 0
 
   unsigned char sign;
   int radix;
+
 };
 
-/////
 
-// Creation deletion
+struct dr {
+
+  bn* full;
+  bn* leftover;
+
+};
+
+
+typedef struct sd {
+  limb_type result;
+  bn* leftover;
+} single_divide_result;
+
+
+///////////////////////
+///// Creation + deletion
+////////////////////////
+
 // Shortcut specification for sign: 1 == '+' 0 == '-'
+
 bn* bn_new() {
   bn* new = (bn*) malloc(sizeof(bn));
 
-  new -> limbs = (limb_type*) calloc(sizeof(limb_type), NUM_NEW_LIMBS);
+  new -> limbs = (limb_type*) calloc(NUM_NEW_LIMBS, sizeof(limb_type));
   new -> num_limbs = NUM_NEW_LIMBS;
 
   new -> sign = 1;
@@ -86,34 +61,36 @@ bn* bn_new() {
   return new;
 }
 
+
 int bn_delete(bn* t) {
+
   free(t -> limbs);
   free(t);
 
   return BN_OK;
 }
 
-// Utilities
+
+
+////////////////////
+//////// Change size
+////////////////////
+
 
 int bn_add_limbs(bn* t, int num_limbs) {
 
-  limb_type* old_limbs = t->limbs;
-
-  t->limbs = (limb_type*) calloc(sizeof(limb_type), t->num_limbs+num_limbs);
-
-  for (int i = 0; i < t->num_limbs; ++i)
-    t->limbs[i] = old_limbs[i];
-
+  t->limbs = (limb_type*) realloc(t->limbs, sizeof(limb_type)*(t->num_limbs+num_limbs));
+  memset(t->limbs + t->occupied_limbs, 0, (t->num_limbs+num_limbs - t->occupied_limbs)*sizeof(limb_type));
   t->num_limbs += num_limbs;
-
-  free(old_limbs);
 
   return BN_OK;
 }
 
+
 int bn_increase_size(bn* t) {
   return bn_add_limbs(t, t->num_limbs*0.25);
 }
+
 
 int bn_digit_shift(bn* t, int num_digit) {
 
@@ -132,7 +109,12 @@ int bn_digit_shift(bn* t, int num_digit) {
   return BN_OK;
 }
 
+
+
+/////////////////////
 // By limb operations
+/////////////////////
+
 
 int bn_add_limb_to_limb(bn* t, limb_type number, int limb_idx) {
 
@@ -147,6 +129,7 @@ int bn_add_limb_to_limb(bn* t, limb_type number, int limb_idx) {
   if (curry) {
     if (limb_idx + 1 == t->num_limbs)
       bn_increase_size(t);
+
     bn_add_limb_to_limb(t, 1, limb_idx + 1);
   }
 
@@ -180,17 +163,11 @@ int bn_multiply_limb_by_limb(bn* t, limb_type number, int limb_idx) {
   return BN_OK;
 }
 
-int bn_equals_init(bn*, bn const*);
 
-typedef struct sd {
-  limb_type result;
-  bn* leftover;
-} single_devide_result;
-
-single_devide_result bn_limb_devide(bn const *a, bn const *b) {
+single_divide_result bn_limb_divide(bn const *a, bn const *b) {
   // Fucks up, when a or b is negative
 
-  single_devide_result answer;
+  single_divide_result answer;
   answer.result = 0;
 
   int cmp = bn_cmp(a, b);
@@ -248,11 +225,17 @@ single_devide_result bn_limb_devide(bn const *a, bn const *b) {
   return answer;
 }
 
+
+
+/////////////////
 // Initialization
+/////////////////
+
 
 int bn_init_string_radix(bn *t, const char *init_string, int radix) {
 
   int sign = 1, start_idx = 0;
+
   if (init_string[0] == '-') {
     sign = 0;
     start_idx = 1;
@@ -269,15 +252,17 @@ int bn_init_string_radix(bn *t, const char *init_string, int radix) {
   return BN_OK;
 }
 
+
 int bn_init_string(bn* t, const char *init_string) {
   return bn_init_string_radix(t, init_string, 10);
 }
+
 
 bn *bn_init(bn const *orig) {
 
   bn* new = (bn*) malloc(sizeof(bn));
 
-  new->limbs = (limb_type*) calloc(sizeof(limb_type), orig->num_limbs);
+  new->limbs = (limb_type*) calloc(orig->num_limbs, sizeof(limb_type));
   new->num_limbs = orig->num_limbs;
 
   new -> sign = orig -> sign;
@@ -291,45 +276,59 @@ bn *bn_init(bn const *orig) {
   return new;
 }
 
+
 int bn_equals_init(bn* t, bn const *orig) {
 
+  if (t->num_limbs >= orig->occupied_limbs) {
 
-  if (t->num_limbs > orig->occupied_limbs) {
-
-    memset(t->limbs, 0, t->num_limbs);
-    for (int i = 0; i < orig->occupied_limbs; ++i)
-        t->limbs[i] = orig->limbs[i];
-
-    t -> occupied_limbs = orig->occupied_limbs;
-    t -> radix = orig -> radix;
-    t -> sign = orig -> sign;
+    memset(t->limbs, 0, t->num_limbs*sizeof(limb_type));
 
   } else {
 
-    bn_delete(t);
-    t = bn_init(orig);
+    free(t->limbs);
+    t->limbs = (limb_type*) calloc(orig->num_limbs, sizeof(limb_type));
+    t->num_limbs = orig->num_limbs;
   }
+
+  for (int i = 0; i < orig->occupied_limbs; ++i)
+    t->limbs[i] = orig->limbs[i];
+
+  t -> occupied_limbs = orig->occupied_limbs;
+  t -> radix = orig -> radix;
+  t -> sign = orig -> sign;
 
   return BN_OK;
 }
 
-/*
-int bn_init_int(bn *t, int init_int) {
 
+int bn_init_int(bn* t, int init_int) {
+  // TODO: Make this function not for chars
 
+  memset(t->limbs, 0, t->num_limbs*sizeof(limb_type));
+
+  t->limbs[0] = init_int;
+  t->occupied_limbs = 1;
+
+  return BN_OK;
 }
-*/
+
+
+///////////////////////
 // Signs and comparison
+//////////////////////
+
 
 int bn_abs(bn *t) {
   t->sign = 1;
   return BN_OK;
 }
 
+
 int bn_neg(bn *t) {
   t->sign ^= 1;
   return BN_OK;
 }
+
 
 int bn_abs_cmp(bn const *left, bn const *right) {
 
@@ -350,8 +349,8 @@ int bn_abs_cmp(bn const *left, bn const *right) {
   }
 
   return 0;
-
 }
+
 
 int bn_cmp(bn const *left, bn const *right) {
 
@@ -365,19 +364,27 @@ int bn_cmp(bn const *left, bn const *right) {
   int positive = left->sign ? 1 : -1;
 
   return bn_abs_cmp(left, right) * positive;
-
 }
 
+
+
+//////////////////////////
 // One argument operations
+//////////////////////////
+
 
 int bn_add_to(bn *t, bn const *right) {
 
   if ( (!t->sign && !right->sign) || (t->sign && right->sign)){
+
+    if (right->num_limbs > t->num_limbs)
+      bn_add_limbs(t, right->num_limbs-t->num_limbs);
+
     for (int i = 0; i < right->occupied_limbs; ++i)
       bn_add_limb_to_limb(t, right->limbs[i], i);
 
   } else {
-    // Plus negative == Minus positive
+
     bn* right_copy = bn_init(right);
 
     if (!t->sign) {
@@ -399,20 +406,26 @@ int bn_add_to(bn *t, bn const *right) {
   return BN_OK;
 }
 
+
 int negate(bn* t, int num_limbs) {
+
   for (int i = 0; i < num_limbs; ++i)
     t->limbs[i] = ~(t->limbs[i]);
+
   t->occupied_limbs = num_limbs;
+
   bn_add_limb_to_limb(t, 1, 0);
+
   return BN_OK;
 }
 
+//TODO: Debug this bad boy
 int bn_sub_to(bn *t, bn const *right) {
 
   bn* right_copy = bn_init(right);
 
   if (!right->sign) {
-    // Minus negative == Plust positive
+    // Minus negative == Plus positive
     bn_abs(right_copy);
     bn_add_to(t, right_copy);
   } else if (!t->sign) {
@@ -450,6 +463,8 @@ int bn_sub_to(bn *t, bn const *right) {
       if (cmp == 1)
         t->sign=0;
 
+      bn_delete(negative_num);
+
     } else {
       memset(t->limbs, 0, t->occupied_limbs);
       t->occupied_limbs = 0;
@@ -465,10 +480,47 @@ int bn_sub_to(bn *t, bn const *right) {
       }
   }
 
+  bn_delete(right_copy);
+
   return BN_OK;
 }
 
+
+int bn_mul_to(bn *t, bn const *right) {
+
+  bn* answer = bn_mul(t, right);
+  bn_equals_init(t, answer);
+  bn_delete(answer);
+
+  return BN_OK;
+}
+
+
+int bn_div_to(bn *t, bn const *right) {
+
+  bn* answer = bn_div(t, right);
+  bn_equals_init(t, answer);
+  bn_delete(answer);
+
+  return BN_OK;
+}
+
+
+int bn_mod_to(bn *t, bn const *right) {
+
+  bn* answer = bn_mod(t, right);
+  bn_equals_init(t, answer);
+  bn_delete(answer);
+
+  return BN_OK;
+}
+
+
+
+//////////////////////////
 // Two argument operations
+//////////////////////////
+
 
 bn* bn_add(bn const *left, bn const *right) {
 
@@ -477,6 +529,7 @@ bn* bn_add(bn const *left, bn const *right) {
 
   return answer;
 }
+
 
 bn* bn_sub(bn const *left, bn const *right) {
 
@@ -511,66 +564,70 @@ bn* bn_mul(bn const *left, bn const *right) {
 }
 
 
-
-typedef struct dr {
-  bn* full;
-  bn* leftover;
-} division_result;
-
-
-long long bn_to_decimal(bn* t);
 division_result bn_div_full(bn const *left, bn const *right) {
 
   division_result result;
-  result.full = bn_new();
-  result.leftover = bn_new();
 
+  result.full = bn_new();
+
+  // Compare operands to determine what to do with them.
   int cmp = bn_cmp(left, right);
 
   if (cmp == 1) {
+    // If the the devisor is bigger then we get 0 as full and divisable as a leftover
     result.leftover = bn_init(left);
+
   } else if (cmp == 0) {
-    bn_init_string(result.full, "1");
+
+    // They are equal - makes sence
+    bn_init_int(result.full, 1);
+    result.leftover = bn_new();
+
   } else {
 
-    bn* to_devide = bn_new();
+    result.leftover = bn_new();
+
+    bn* to_divide = bn_new();
+
+    // We do division russian style (в столбик)
+    // At each step we add next digit to what  has been left from previous division
 
     for (int i = left->occupied_limbs-1; i>=0; --i) {
 
-      //printf("Before shift: %d, %lld\n", to_devide->occupied_limbs, bn_to_decimal(to_devide));
-      bn_digit_shift(to_devide, 1);
-      //printf("After shift: %d, %lld\n", to_devide->occupied_limbs, bn_to_decimal(to_devide));
+      // This operation is equivalent to multiplying each number by the
+      // base of the radix.
+
+      bn_digit_shift(to_divide, 1);
       bn_digit_shift(result.full, 1);
 
-      //printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
+      // This way we get next digit from the divisable
 
-      //printf("%d\n", left->limbs[i]);
-      bn_add_limb_to_limb(to_devide, left->limbs[i], 0);
+      bn_add_limb_to_limb(to_divide, left->limbs[i], 0);
 
-      //printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
+      // Now we divide to get new digit in out number
 
-      //printf("Deviding: %lld\n", bn_to_decimal(to_devide));
+      single_divide_result temp_res = bn_limb_divide(to_divide, right);
 
-      single_devide_result temp_res = bn_limb_devide(to_devide, right);
-
-      //printf("%d %lld\n", temp_res.result, bn_to_decimal(temp_res.leftover));
-      //printf("Leftover: %d, %lld\n", temp_res.leftover->occupied_limbs,  bn_to_decimal(temp_res.leftover));
-
-      bn_equals_init(to_devide, temp_res.leftover);
+      bn_equals_init(to_divide, temp_res.leftover);
       bn_add_limb_to_limb(result.full, temp_res.result, 0);
 
-      //printf("%lld %lld \n", bn_to_decimal(to_devide), bn_to_decimal(result.full));
+      bn_delete(temp_res.leftover);
 
     }
 
-    bn_equals_init(result.leftover, to_devide);
-    bn_delete(to_devide);
+    // We ran out of digits so to_divide is a leftover
+
+    bn_equals_init(result.leftover, to_divide);
+
+    bn_delete(to_divide);
   }
 
   return result;
 }
 
+
 bn* bn_div(bn const *left, bn const *right) {
+
   division_result result = bn_div_full(left, right);
   bn_delete(result.leftover);
 
@@ -582,42 +639,39 @@ bn* bn_div(bn const *left, bn const *right) {
   return result.full;
 }
 
+
 bn* bn_mod(bn const *left, bn const *right) {
+
   division_result result = bn_div_full(left, right);
   bn_delete(result.full);
   return result.leftover;
 }
 
-// Bad boy that ruins beautiful structure
 
-int bn_mul_to(bn *t, bn const *right) {
 
-  bn* answer = bn_mul(t, right);
-  bn_delete(t);
-  t = bn_init(answer);
+////////////////////////
+// Additional operations
+////////////////////////
 
-  return BN_OK;
+
+int bn_pow_to(bn *t, int degree) {
+  bn* mult = bn_init(t);
+  for (int i = 1; i < degree; ++i)
+    bn_mul_to(t, mult);
+  bn_delete(mult);
+  return 0;
 }
 
-int bn_div_to(bn *t, bn const *right) {
-
-  bn* answer = bn_div(t, right);
-  bn_delete(t);
-  t = bn_init(answer);
-
-  return BN_OK;
+int bn_root_to(bn *t, int reciprocal) {
+  return 0;
 }
 
-int bn_mod_to(bn *t, bn const *right) {
 
-  bn* answer = bn_mod(t, right);
-  bn_delete(t);
-  t = bn_init(answer);
 
-  return BN_OK;
-}
-
+/////////////////////
 // Printing functions
+/////////////////////
+
 
 long long bn_to_decimal(bn* t) {
   long long ans = 0;
@@ -644,9 +698,13 @@ char *strrev(char *str)
       return str;
 }
 
+
 const char *bn_to_string(bn const *t, int radix) {
 
-  char* result_string = (char*) calloc(t->occupied_limbs*4, sizeof(char));
+  int base = pow(2, sizeof(limb_type)*8);
+  int str_len = t->occupied_limbs * log(base) / log(radix) + 1;
+
+  char* result_string = (char*) calloc(str_len, sizeof(char)); // TODO: Determine size of the string
 
   if (t->occupied_limbs == 0) {
     result_string[0] = '0';
@@ -658,20 +716,20 @@ const char *bn_to_string(bn const *t, int radix) {
   bn_abs(temp);
 
   bn* long_radix = bn_new();
-  bn_init_string(long_radix, "10");
+  bn_init_int(long_radix, radix);
 
   for (int i = 0; 1; ++i) {
 
-    /*
-    printf("New num\n");
-    for(int j = 0; j<temp->occupied_limbs; ++j)
-      printf("%d ", temp->limbs[j]);
-    printf("\n");
-*/
     division_result res = bn_div_full(temp, long_radix);
-//    printf("%lld %lld %lld\n", bn_to_decimal(temp), bn_to_decimal(res.full), bn_to_decimal(res.leftover));
 
-    result_string[i] = res.leftover->limbs[0]+'0';
+    char new_digit;
+    if (res.leftover->limbs[0] < 10)
+      new_digit = res.leftover->limbs[0]+'0';
+    else
+      new_digit = res.leftover->limbs[0]-10 + 'A';
+
+    result_string[i] = new_digit;
+
     bn_equals_init(temp, res.full);
 
     bn_delete(res.full);
@@ -684,62 +742,17 @@ const char *bn_to_string(bn const *t, int radix) {
       } else
         result_string[i+1] = '\0';
 
-      result_string = strrev(result_string);
-
       break;
     }
   }
 
   bn_delete(temp);
   bn_delete(long_radix);
+
+  strrev(result_string);
+
   return (const char*) result_string;
 }
 
+
 ///////////////////////
-
-int main() {
-
-  bn* first = bn_new();
-  bn* second = bn_new();
-
-  char* temp_str = (char*) calloc(sizeof(char), 100000);
-  char new_char;
-
-  scanf("%c", &new_char);
-  int i;
-  for(i = 0; new_char!='\n'; ++i) {
-    temp_str[i] = new_char;
-    scanf("%c", &new_char);
-  }
-  temp_str[i] = '\0';
-
-  bn_init_string_radix(first, temp_str, 10);
-
-  scanf("%c", &new_char);
-  int sum = new_char=='+';
-
-  scanf("%c", &new_char);
-  scanf("%c", &new_char);
-  for(i = 0; new_char!='\n'; ++i) {
-    temp_str[i] = new_char;
-    scanf("%c", &new_char);
-  }
-  temp_str[i] = '\0';
-
-  bn_init_string_radix(second, temp_str, 10);
-
-  if (sum)
-    bn_add_to(first, second);
-  else
-    bn_sub_to(first, second);
-
-  const char* result = bn_to_string(first, 10);
-
-  printf("%s\n", result);
-
-  bn_delete(first);
-  bn_delete(second);
-
-  free(temp_str);
-  free((char*)result);
-}
